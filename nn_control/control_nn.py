@@ -194,26 +194,46 @@ def load_actor(model_path=None):
 
 def build_nn_state(theta, omega, target_buffer, H_val):
     """
-    构建神经网络的输入状态向量.
-    结构与训练时一致: [sin(θ), cos(θ), ω, sin(r_1), cos(r_1), ..., sin(r_H), cos(r_H)]
+    构建神经网络的输入状态向量 - 使用连续化差值序列.
 
-    推理时未来的真实目标未知, 使用缓冲区中最近的目标值作为所有
-    未来 H 步的预测 (常数外推). 训练时使用的是真实的未来目标序列,
-    推理时的常数预测是一种近似, 策略网络应能泛化到这种情况.
+    使用 target_buffer 中最近的目标序列作为未来 H 步的预测.
+
+    Returns:
+        state: np.array [STATE_DIM + H_val]
+        结构: [ω, y_0, y_1, ..., y_{H-1}]
     """
-    state = np.zeros(STATE_DIM + 2 * H_val, dtype=np.float32)
-    state[0] = math.sin(theta)
-    state[1] = math.cos(theta)
-    state[2] = omega
+    state = np.zeros(STATE_DIM + H_val, dtype=np.float32)
+    state[0] = omega
 
-    # 取延迟缓冲区中最近的目标值作为未来预测
-    last_target = target_buffer[-1][1] if len(target_buffer) > 0 else 0.0
+    # 从 target_buffer 提取目标值 (按时间排序, 取最近的一段)
+    if len(target_buffer) > 0:
+        # target_buffer 按时间先后排列, 提取目标值列表
+        targets = [tgt for _, tgt in target_buffer]
+        # 取最近的 min(len, H) 个目标
+        recent_targets = targets[-H_val:] if len(targets) > H_val else targets
+    else:
+        recent_targets = [0.0]
+        targets = [0.0]
 
+    # 计算连续化差值序列
     for k in range(H_val):
-        # 如果缓冲区中有对应的未来目标就使用, 否则用最后一个
-        tgt = last_target
-        state[STATE_DIM + 2 * k]     = math.sin(tgt)
-        state[STATE_DIM + 2 * k + 1] = math.cos(tgt)
+        if k < len(recent_targets):
+            tgt = recent_targets[k]
+        elif len(recent_targets) > 0:
+            tgt = recent_targets[-1]
+        else:
+            tgt = 0.0
+
+        raw_y = (tgt - theta + math.pi) % (2 * math.pi) - math.pi
+
+        if k == 0:
+            y_cont = raw_y
+        else:
+            y_prev = state[STATE_DIM + k - 1]
+            delta = (raw_y - y_prev + math.pi) % (2 * math.pi) - math.pi
+            y_cont = y_prev + delta
+
+        state[STATE_DIM + k] = y_cont
 
     return state
 

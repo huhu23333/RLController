@@ -27,11 +27,17 @@ U_MAX = 2.0
 
 # ==================== 神经网络参数 ====================
 H = 20                            # 预测/输出时域 (控制步数, H*DT_CTRL=0.2s)
-STATE_DIM = 3                     # sin(theta), cos(theta), omega
-TARGET_DIM = 2 * H                # sin/cos 对, 共 H 个未来目标
-INPUT_DIM = STATE_DIM + TARGET_DIM  # 43
-ACTION_DIM = 1                    # 20
+STATE_DIM = 1                     # omega (速度), 不再输入当前角度
+TARGET_DIM = H                    # 目标角度与当前角度的连续化差值序列 y_i
+INPUT_DIM = STATE_DIM + TARGET_DIM  # 21
+ACTION_DIM = 1
 HIDDEN_DIM = 1024
+
+# 数据增强参数
+NOISE_STD_MIN = 0.0               # 训练噪音标准差下限 (弧度)
+NOISE_STD_MAX = 0.3               # 训练噪音标准差上限 (弧度)
+SCALE_FACTOR_MIN = 0.7            # 随机尺度因子下限
+SCALE_FACTOR_MAX = 1.3            # 随机尺度因子上限
 
 # ==================== SAC 训练参数 ====================
 LR_ACTOR = 3e-4

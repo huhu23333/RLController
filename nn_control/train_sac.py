@@ -25,6 +25,7 @@ from config import (
     TOTAL_EPISODES, STEPS_PER_EPISODE, MIN_SEGMENT_LENGTH,
     GRADIENT_STEPS, START_TRAIN_AFTER, SAVE_INTERVAL, LOG_INTERVAL,
     REWARD_TRACK_W, REWARD_TORQUE_W,
+    NOISE_STD_MIN, NOISE_STD_MAX, SCALE_FACTOR_MIN, SCALE_FACTOR_MAX,
 )
 from sac_agent import SACAgent
 from replay_buffer import ReplayBuffer
@@ -114,8 +115,21 @@ def sample_target_episode(all_targets, total_len, min_segment_len, add_offset=Tr
     # 拼接所有片段
     target_seq = np.concatenate(segments)[:total_len]
 
-    # 添加随机角度偏移
     if add_offset:
+        # 添加正态分布噪音 (方差在一定范围内随机)
+        noise_std = random.uniform(NOISE_STD_MIN, NOISE_STD_MAX)
+        if noise_std > 0:
+            target_seq = target_seq + np.random.normal(0, noise_std, size=target_seq.shape).astype(np.float32)
+
+        # 随机尺度因子
+        scale = random.uniform(SCALE_FACTOR_MIN, SCALE_FACTOR_MAX)
+        target_seq = target_seq * scale
+
+        # 方向因子 (50% 概率取 1, 50% 取 -1)
+        direction = 1 if random.random() < 0.5 else -1
+        target_seq = target_seq * direction
+
+        # 随机角度偏移
         offset = random.uniform(-math.pi, math.pi)
         target_seq = target_seq + offset
 
@@ -124,34 +138,42 @@ def sample_target_episode(all_targets, total_len, min_segment_len, add_offset=Tr
 
 def build_state(theta, omega, target_seq, idx, H_val):
     """
-    构建 SAC 的输入状态向量.
+    构建 SAC 的输入状态向量 - 使用连续化差值序列.
+
+    y_i = target_{t+i+1} - theta, 连续化使得相邻 y_i 差值在 (-π, π) 内.
 
     Args:
         theta, omega: 当前状态
         target_seq:   完整目标序列
-        idx:          当前步索引 (从0开始), idx 对应的时间步为 t
+        idx:          当前步索引 (从0开始)
         H_val:        预测时域
 
     Returns:
-        state: np.array [STATE_DIM + 2*H_val]
-        结构: [sin(θ), cos(θ), ω, sin(r_{t+1}), cos(r_{t+1}), ..., sin(r_{t+H}), cos(r_{t+H})]
+        state: np.array [STATE_DIM + H_val]
+        结构: [ω, y_0, y_1, ..., y_{H-1}]
     """
-    # 当前状态部分
-    state_vec = np.zeros(STATE_DIM + 2 * H_val, dtype=np.float32)
-    state_vec[0] = math.sin(theta)
-    state_vec[1] = math.cos(theta)
-    state_vec[2] = omega
+    state_vec = np.zeros(STATE_DIM + H_val, dtype=np.float32)
+    state_vec[0] = omega
 
-    # 未来目标序列 (sin/cos 对)
+    # 计算原始差值并连续化
     for k in range(H_val):
-        tgt_idx = idx + k + 1  # t+1, t+2, ..., t+H
+        tgt_idx = idx + k + 1
         if tgt_idx < len(target_seq):
             tgt = float(target_seq[tgt_idx])
         else:
-            tgt = float(target_seq[-1])  # 超出时使用最后一个目标
+            tgt = float(target_seq[-1])
 
-        state_vec[STATE_DIM + 2 * k]     = math.sin(tgt)
-        state_vec[STATE_DIM + 2 * k + 1] = math.cos(tgt)
+        raw_y = wrap_angle(tgt - theta)
+
+        if k == 0:
+            y_cont = raw_y
+        else:
+            y_prev = state_vec[STATE_DIM + k - 1]
+            # 调整 raw_y 使得 |y_cont - y_prev| < π
+            delta = wrap_angle(raw_y - y_prev)
+            y_cont = y_prev + delta
+
+        state_vec[STATE_DIM + k] = y_cont
 
     return state_vec
 
