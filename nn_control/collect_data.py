@@ -20,7 +20,78 @@ from config import (
     DATA_DIR, DT_ENV, DT_CTRL, STEPS_PER_CTRL,
     J, TAU_C, TAU_S, OMEGA_S, B, ANGLE_LIMIT, DISTURBANCE_TORQUE,
     U_MIN, U_MAX, H,
+    MODEL_DIR, INPUT_DIM, ACTION_DIM, HIDDEN_DIM, STATE_DIM
 )
+from networks import Actor
+
+def load_actor(model_path=None):
+    """加载训练好的 Actor 网络"""
+    import torch
+    if model_path is None:
+        # 查找最新的模型文件
+        if os.path.exists(MODEL_DIR):
+            actors = sorted([f for f in os.listdir(MODEL_DIR) if f.startswith('actor_')])
+            if actors:
+                model_path = os.path.join(MODEL_DIR, actors[-1])
+                print(f"自动选择模型: {model_path}")
+            else:
+                print(f"错误: 在 {MODEL_DIR} 未找到模型文件")
+                return None
+        else:
+            print(f"错误: 模型目录不存在 {MODEL_DIR}")
+            return None
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    actor = Actor(INPUT_DIM, ACTION_DIM, HIDDEN_DIM, U_MIN, U_MAX).to(device)
+    actor.load_state_dict(torch.load(model_path, map_location=device))
+    actor.eval()
+    print(f"模型已加载: {model_path} (设备: {device})")
+    return actor
+
+def build_nn_state(theta, omega, target_buffer, H_val):
+    """
+    构建神经网络的输入状态向量 - 使用连续化差值序列.
+
+    使用 target_buffer 中最近的目标序列作为未来 H 步的预测.
+
+    Returns:
+        state: np.array [STATE_DIM + H_val]
+        结构: [ω, y_0, y_1, ..., y_{H-1}]
+    """
+    state = np.zeros(STATE_DIM + H_val, dtype=np.float32)
+    state[0] = omega
+
+    # 从 target_buffer 提取目标值 (按时间排序, 取最近的一段)
+    if len(target_buffer) > 0:
+        # target_buffer 按时间先后排列, 提取目标值列表
+        targets = [tgt for _, tgt in target_buffer]
+        # 取最近的 min(len, H) 个目标
+        recent_targets = targets[-H_val:] if len(targets) > H_val else targets
+    else:
+        recent_targets = [0.0]
+        targets = [0.0]
+
+    # 计算连续化差值序列
+    for k in range(H_val):
+        if k < len(recent_targets):
+            tgt = recent_targets[k]
+        elif len(recent_targets) > 0:
+            tgt = recent_targets[-1]
+        else:
+            tgt = 0.0
+
+        raw_y = (tgt - theta + math.pi) % (2 * math.pi) - math.pi
+
+        if k == 0:
+            y_cont = raw_y
+        else:
+            y_prev = state[STATE_DIM + k - 1]
+            delta = (raw_y - y_prev + math.pi) % (2 * math.pi) - math.pi
+            y_cont = y_prev + delta
+
+        state[STATE_DIM + k] = y_cont
+
+    return state
 
 # ================== 窗口参数 (与 test2.py 一致) ==================
 ORIGIN_WIDTH, ORIGIN_HEIGHT = 1600, 1200
@@ -225,6 +296,10 @@ def main():
         output_limit=2.0,
         deadband=0.0
     )
+    actor = load_actor()
+    if actor is None:
+        print("无法加载模型, 退出.")
+        return
     curve_plotter = CurvePlotter(screen, CURVE_RECT, DT_CTRL,
                                  init_time_range=5.0, init_angle_range=3.14)
 
@@ -374,10 +449,14 @@ def main():
             # tau_opt = mpc.step(state, ref_list)
             # action = np.array([tau_opt])
             # PID 控制 (替代 MPC)
-            error = delayed_target - env.theta
-            error = (error + math.pi) % (2 * math.pi) - math.pi
-            tau_opt = pid.step(np.array([error]), DT_CTRL)
-            action = np.array([tau_opt])
+            # error = delayed_target - env.theta
+            # error = (error + math.pi) % (2 * math.pi) - math.pi
+            # tau_opt = pid.step(np.array([error]), DT_CTRL)
+            # action = np.array([tau_opt])
+            # Actor 控制 (替代 MPC)
+            nn_state = build_nn_state(env.theta, env.omega, target_buffer, H)
+            action = actor.get_action(nn_state, deterministic=True)
+            tau_opt = np.array([action[0]])
 
             # 录制数据
             if is_recording and not is_playback:
