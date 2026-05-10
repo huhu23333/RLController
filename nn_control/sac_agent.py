@@ -16,6 +16,7 @@ class SACAgent:
     """
     def __init__(self, input_dim, action_dim, hidden_dim=256,
                  lr_actor=3e-4, lr_critic=3e-4, lr_alpha=3e-4,
+                 weight_decay_actor=1e-4, weight_decay_critic=1e-4,
                  gamma=0.99, tau=0.005, target_entropy=None,
                  u_min=-2.0, u_max=2.0, device='cpu'):
         self.device = torch.device(device)
@@ -25,13 +26,13 @@ class SACAgent:
 
         # Actor (策略网络)
         self.actor = Actor(input_dim, action_dim, hidden_dim, u_min, u_max).to(self.device)
-        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr_actor)
+        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr_actor, weight_decay=weight_decay_actor)
 
         # 双 Critic (Q 网络)
         self.critic1 = Critic(input_dim, action_dim, hidden_dim).to(self.device)
         self.critic2 = Critic(input_dim, action_dim, hidden_dim).to(self.device)
-        self.critic1_optimizer = optim.Adam(self.critic1.parameters(), lr=lr_critic)
-        self.critic2_optimizer = optim.Adam(self.critic2.parameters(), lr=lr_critic)
+        self.critic1_optimizer = optim.Adam(self.critic1.parameters(), lr=lr_critic, weight_decay=weight_decay_critic)
+        self.critic2_optimizer = optim.Adam(self.critic2.parameters(), lr=lr_critic, weight_decay=weight_decay_critic)
 
         # 目标 Critic
         self.critic1_target = Critic(input_dim, action_dim, hidden_dim).to(self.device)

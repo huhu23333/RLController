@@ -255,7 +255,7 @@ def main():
     device = next(actor.parameters()).device
 
     # 初始化仿真环境
-    env = SimpleYawSimEnv(dt=DT_ENV)
+    env = SimpleYawSimEnv(dt=DT_ENV, J=0.01)
     curve_plotter = CurvePlotter(screen, CURVE_RECT, DT_CTRL,
                                  init_time_range=5.0, init_angle_range=3.14)
 
@@ -327,7 +327,13 @@ def main():
             nn_state = build_nn_state(env.theta, env.omega, target_buffer, H)
 
             t_infer_start = time.perf_counter()
-            action_np = actor.get_action(nn_state, deterministic=True)
+            # 对称性
+            if False:
+                symmetry_nn_state = np.stack([nn_state, -nn_state])
+                symmetry_action_np = actor.get_action(symmetry_nn_state, deterministic=True)
+                action_np = (symmetry_action_np[0] - symmetry_action_np[1]) / 2.0
+            else:
+                action_np = actor.get_action(nn_state, deterministic=True)
             nn_inference_time = time.perf_counter() - t_infer_start
 
             # 应用第一个力矩

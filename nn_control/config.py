@@ -31,7 +31,7 @@ STATE_DIM = 1                     # omega (速度), 不再输入当前角度
 TARGET_DIM = H                    # 目标角度与当前角度的连续化差值序列 y_i
 INPUT_DIM = STATE_DIM + TARGET_DIM  # 21
 ACTION_DIM = 1
-HIDDEN_DIM = 1024
+HIDDEN_DIM = 256
 
 # 数据增强参数
 NOISE_STD_MIN = 0.0               # 训练噪音标准差下限 (弧度)
@@ -43,7 +43,9 @@ SCALE_FACTOR_MAX = 1.3            # 随机尺度因子上限
 LR_ACTOR = 3e-4
 LR_CRITIC = 3e-4
 LR_ALPHA = 3e-4
-GAMMA = 0.99
+WD_ACTOR = 1e-4
+WD_CRITIC = 1e-4
+GAMMA = 0.80
 TAU = 0.005                      # 目标网络软更新系数
 BATCH_SIZE = 256
 REPLAY_SIZE = 500000
@@ -60,7 +62,7 @@ LOG_INTERVAL = 10                # 每 N 个 episode 记录一次日志
 
 # 奖励权重
 REWARD_TRACK_W = 1.0             # 跟踪误差权重
-REWARD_TORQUE_W = 0.0001           # 力矩惩罚权重
+REWARD_TORQUE_W = 0.0 # 0.0001           # 力矩惩罚权重
 
 # ==================== 数据采集参数 ====================
 RECORD_KEY = "space"             # 录制开关按键 (pygame key name)

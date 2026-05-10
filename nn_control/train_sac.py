@@ -21,11 +21,12 @@ from config import (
     U_MIN, U_MAX, H,
     STATE_DIM, TARGET_DIM, INPUT_DIM, ACTION_DIM, HIDDEN_DIM,
     LR_ACTOR, LR_CRITIC, LR_ALPHA,
+    WD_ACTOR, WD_CRITIC,
     GAMMA, TAU, BATCH_SIZE, REPLAY_SIZE, TARGET_ENTROPY,
     TOTAL_EPISODES, STEPS_PER_EPISODE, MIN_SEGMENT_LENGTH,
     GRADIENT_STEPS, START_TRAIN_AFTER, SAVE_INTERVAL, LOG_INTERVAL,
     REWARD_TRACK_W, REWARD_TORQUE_W,
-    NOISE_STD_MIN, NOISE_STD_MAX, SCALE_FACTOR_MIN, SCALE_FACTOR_MAX,
+    NOISE_STD_MIN, NOISE_STD_MAX, SCALE_FACTOR_MIN, SCALE_FACTOR_MAX
 )
 from sac_agent import SACAgent
 from replay_buffer import ReplayBuffer
@@ -237,6 +238,7 @@ def train():
         input_dim=INPUT_DIM, action_dim=ACTION_DIM,
         hidden_dim=HIDDEN_DIM,
         lr_actor=LR_ACTOR, lr_critic=LR_CRITIC, lr_alpha=LR_ALPHA,
+        weight_decay_actor=WD_ACTOR, weight_decay_critic=WD_CRITIC,
         gamma=GAMMA, tau=TAU, target_entropy=TARGET_ENTROPY,
         u_min=U_MIN, u_max=U_MAX, device=device
     )
@@ -290,7 +292,10 @@ def train():
             # 计算奖励
             target_current = float(target_seq[step + 1])  # 当前步的目标
             err = angle_error(theta_new, target_current)
-            reward = -(REWARD_TRACK_W * err ** 2) - (REWARD_TORQUE_W * torque ** 2)
+
+            accurate_rad_threshold = 0.5 * math.pi/180.0
+            err_loss = err ** 2 + 1.0 * abs(err) + 0.2 * (1.0 if abs(err) > (accurate_rad_threshold) else 0.0)
+            reward = -(REWARD_TRACK_W * err_loss) - (REWARD_TORQUE_W * torque ** 2)
 
             # 构建下一状态 (用下一时刻的位置看未来 H 步目标)
             next_state = build_state(theta_new, omega_new, target_seq, step + 1, H)

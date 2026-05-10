@@ -13,6 +13,16 @@ def init_weights(layer, scale=1.0):
         layer.bias.data.zero_()
 
 
+class ResidualFCBlock(nn.Module):
+    def __init__(self, dim, activation = nn.ReLU()):
+        super().__init__()
+        self.fc = nn.Linear(dim, dim)
+        self.activation = activation
+
+    def forward(self, x):
+        return self.activation(self.fc(x)) + x
+
+
 class Actor(nn.Module):
     """
     SAC Actor 网络.
@@ -27,17 +37,18 @@ class Actor(nn.Module):
 
         self.net = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            nn.LeakyReLU(),
+            ResidualFCBlock(hidden_dim, nn.LeakyReLU()),
+            ResidualFCBlock(hidden_dim, nn.LeakyReLU()),
+            ResidualFCBlock(hidden_dim, nn.Tanh()),
+            ResidualFCBlock(hidden_dim, nn.LeakyReLU()),
+            ResidualFCBlock(hidden_dim, nn.Tanh()),
+            ResidualFCBlock(hidden_dim, nn.LeakyReLU()),
+            ResidualFCBlock(hidden_dim, nn.Tanh()),
+            ResidualFCBlock(hidden_dim, nn.LeakyReLU()),
+            ResidualFCBlock(hidden_dim, nn.Tanh()),
+            ResidualFCBlock(hidden_dim, nn.Tanh()),
+            nn.LeakyReLU(),
         )
 
         self.mean_layer = nn.Linear(hidden_dim, action_dim)
@@ -130,11 +141,12 @@ class Critic(nn.Module):
         super().__init__()
         self.q = nn.Sequential(
             nn.Linear(input_dim + action_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            nn.LeakyReLU(),
+            ResidualFCBlock(hidden_dim, nn.LeakyReLU()),
+            ResidualFCBlock(hidden_dim, nn.LeakyReLU()),
+            ResidualFCBlock(hidden_dim, nn.LeakyReLU()),
+            ResidualFCBlock(hidden_dim, nn.LeakyReLU()),
+            ResidualFCBlock(hidden_dim, nn.LeakyReLU()),
             nn.Linear(hidden_dim, 1),
         )
         self.apply(lambda m: init_weights(m, 1.0))
