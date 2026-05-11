@@ -32,7 +32,7 @@ B_ARROW = 300
 ARROW_LEN = 500
 CURVE_RECT = pygame.Rect(ORIGIN_WIDTH, 0, CURVE_WIDTH, HEIGHT)
 
-DELAY_TIME = 0.1
+DELAY_TIME = 0.2
 DELAY_STEPS = int(DELAY_TIME / DT_CTRL)
 
 
@@ -310,6 +310,7 @@ def main():
             target_buffer.append((current_time, real_target))
             while len(target_buffer) > DELAY_STEPS + 1:
                 target_buffer.popleft()
+                #delayed_target = target_buffer.popleft()[1]
 
             # 计算延迟目标
             if target_buffer:

@@ -45,14 +45,14 @@ LR_CRITIC = 3e-4
 LR_ALPHA = 3e-4
 WD_ACTOR = 1e-4
 WD_CRITIC = 1e-4
-GAMMA = 0.90
+GAMMA = 0.85
 TAU = 0.005                      # 目标网络软更新系数
 BATCH_SIZE = 256
 REPLAY_SIZE = 500000
 TARGET_ENTROPY = -ACTION_DIM     # 目标熵 = -dim(A)
 
 # 训练循环
-TOTAL_EPISODES = 5000            # 总训练 episode 数
+TOTAL_EPISODES = 50000            # 总训练 episode 数
 STEPS_PER_EPISODE = 2000          # 每个 episode 的控制步数 (20s)
 MIN_SEGMENT_LENGTH = 1000        # 单段最小长度 (控制步数, 10s)
 GRADIENT_STEPS = 50              # 每个 episode 的梯度更新步数

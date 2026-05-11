@@ -269,7 +269,7 @@ def main():
         mouse_x, _ = pygame.mouse.get_pos()
         if 0 <= mouse_x < ORIGIN_WIDTH:
             dx = mouse_x - CENTER_X
-            real_target = math.atan2(-dx, B)
+            real_target = -dx/B*1.5 # math.atan2(-dx, B)
             last_valid_real_target = real_target
         else:
             real_target = last_valid_real_target

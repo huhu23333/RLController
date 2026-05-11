@@ -267,7 +267,7 @@ def main():
         mouse_x, _ = pygame.mouse.get_pos()
         if 0 <= mouse_x < ORIGIN_WIDTH:
             dx = mouse_x - CENTER_X
-            target_angle = math.atan2(-dx, B)      # 与题目公式一致
+            target_angle = -dx/B*1.5 # math.atan2(-dx, B)      # 与题目公式一致
             last_valid_target = target_angle
         else:
             target_angle = last_valid_target       # 鼠标移出左侧则保持原角度
