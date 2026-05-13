@@ -18,7 +18,7 @@ from config import (
     U_MIN, U_MAX, H,
     STATE_DIM, TARGET_DIM, INPUT_DIM, ACTION_DIM, HIDDEN_DIM,
 )
-from networks import Actor
+from networks import Actor, SmallActor
 
 
 # ================== 窗口参数 (与 test2.py 完全一致) ==================
@@ -168,7 +168,7 @@ def draw_arrow(screen, font, angle, delayed_target, total_time):
 
 
 def load_actor(model_path=None):
-    """加载训练好的 Actor 网络"""
+    """加载训练好的 Actor 网络 (教师网络)"""
     import torch
     if model_path is None:
         # 查找最新的模型文件
@@ -188,8 +188,102 @@ def load_actor(model_path=None):
     actor = Actor(INPUT_DIM, ACTION_DIM, HIDDEN_DIM, U_MIN, U_MAX).to(device)
     actor.load_state_dict(torch.load(model_path, map_location=device))
     actor.eval()
-    print(f"模型已加载: {model_path} (设备: {device})")
+    print(f"教师模型已加载: {model_path} (设备: {device})")
+    print(f"参数量: {sum(p.numel() for p in actor.parameters()):,}")
     return actor
+
+
+def load_student(model_path=None):
+    """加载蒸馏后的学生网络 (SmallActor)"""
+    import torch
+    if model_path is None:
+        # 查找最佳学生模型
+        if os.path.exists(MODEL_DIR):
+            candidates = [f for f in os.listdir(MODEL_DIR)
+                          if f.startswith('student_') and f.endswith('.pth')]
+            # 优先选择 student_best.pth
+            if 'student_best.pth' in candidates:
+                model_path = os.path.join(MODEL_DIR, 'student_best.pth')
+            elif candidates:
+                candidates.sort()
+                model_path = os.path.join(MODEL_DIR, candidates[-1])
+                print(f"未找到 student_best.pth, 自动选择: {model_path}")
+            else:
+                print(f"错误: 在 {MODEL_DIR} 未找到学生模型文件")
+                return None
+        else:
+            print(f"错误: 模型目录不存在 {MODEL_DIR}")
+            return None
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    student = SmallActor(INPUT_DIM, ACTION_DIM, u_min=U_MIN, u_max=U_MAX).to(device)
+    student.load_state_dict(torch.load(model_path, map_location=device))
+    student.eval()
+    print(f"学生模型已加载: {model_path} (设备: {device})")
+    print(f"参数量: {sum(p.numel() for p in student.parameters()):,}")
+    return student
+
+
+def get_chinese_font(size):
+    """获取支持中文的字体，如果找不到则回退到默认字体"""
+    # 常见中文字体路径 (按优先级排序)
+    font_candidates = [
+        # Noto Sans CJK (Linux)
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        # WenQuanYi (Linux)
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        # Windows 常见中文字体
+        "C:\\Windows\\Fonts\\msyh.ttc",        # Microsoft YaHei
+        "C:\\Windows\\Fonts\\simhei.ttf",      # SimHei
+        "C:\\Windows\\Fonts\\simsun.ttc",      # SimSun
+        # macOS 常见中文字体
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+    ]
+    for font_path in font_candidates:
+        if os.path.exists(font_path):
+            try:
+                font = pygame.font.Font(font_path, size)
+                # 验证是否能渲染中文
+                test_surf = font.render("中文测试", True, (255, 255, 255))
+                if test_surf.get_width() > 0:
+                    return font
+            except Exception:
+                continue
+
+    # 如果都不行，尝试用 SysFont 按字体名称查找
+    chinese_font_names = [
+        "Noto Sans CJK SC", "Noto Sans CJK",
+        "WenQuanYi Micro Hei", "WenQuanYi Zen Hei",
+        "Microsoft YaHei", "SimHei", "SimSun",
+        "PingFang SC", "Heiti SC", "STHeiti",
+    ]
+    for name in chinese_font_names:
+        try:
+            font = pygame.font.SysFont(name, size)
+            test_surf = font.render("中文测试", True, (255, 255, 255))
+            if test_surf.get_width() > 10:  # 宽度 > 10 说明确实渲染出了文字
+                return font
+        except Exception:
+            continue
+
+    # 最后的回退：使用默认字体（可能无法显示中文，但至少程序不会崩溃）
+    print("警告: 未找到支持中文的字体，中文可能显示为方框")
+    return pygame.font.Font(None, size)
+
+
+def inference_with_model(model, nn_state, is_student=False):
+    """
+    统一推理接口.
+    教师网络使用 get_action(state, deterministic=True)
+    学生网络使用 get_action(state) (确定性输出)
+    """
+    if is_student:
+        return model.get_action(nn_state)
+    else:
+        return model.get_action(nn_state, deterministic=True)
 
 
 def build_nn_state(theta, omega, target_buffer, H_val):
@@ -240,19 +334,39 @@ def build_nn_state(theta, omega, target_buffer, H_val):
 
 def main():
     import torch
+    import argparse
+
+    # ---- 命令行参数解析 ----
+    parser = argparse.ArgumentParser(description="神经网络控制界面 (支持模型切换)")
+    parser.add_argument('--model', '-m', type=str, default=None,
+                        help='教师模型路径 (默认自动选择 actor_best.pth)')
+    parser.add_argument('--student', '-s', type=str, default=None,
+                        help='学生模型路径 (默认自动选择 student_best.pth)')
+    parser.add_argument('--use-student', action='store_true', default=False,
+                        help='启动时使用学生模型 (默认使用教师模型)')
+    args = parser.parse_args()
+
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("Neural Network Control (SAC)")
+    pygame.display.set_caption("Neural Network Control (SAC) - 支持模型切换")
     clock = pygame.time.Clock()
-    font = pygame.font.Font(None, 30)
-    small_font = pygame.font.Font(None, 24)
+    font = get_chinese_font(30)
+    small_font = get_chinese_font(24)
 
-    # 加载神经网络
-    actor = load_actor()
+    # 加载教师网络
+    actor = load_actor(args.model)
     if actor is None:
-        print("无法加载模型, 退出.")
+        print("无法加载教师模型, 退出.")
         return
     device = next(actor.parameters()).device
+
+    # 加载学生网络 (蒸馏模型)
+    student = load_student(args.student)
+
+    # 当前使用的模型 (默认教师, 或根据命令行参数选择)
+    use_student = args.use_student and student is not None
+    current_model = student if use_student else actor
+    is_student_mode = use_student
 
     # 初始化仿真环境
     env = SimpleYawSimEnv(dt=DT_ENV, J=0.01)
@@ -288,6 +402,20 @@ def main():
                     curve_plotter.modify_angle_range(-0.2)
                 elif event.key == pygame.K_RIGHTBRACKET:
                     curve_plotter.modify_angle_range(0.2)
+                elif event.key == pygame.K_d:
+                    # 按 'd' 键切换教师/学生模型
+                    if student is not None:
+                        is_student_mode = not is_student_mode
+                        current_model = student if is_student_mode else actor
+                        mode_name = "学生模型 (蒸馏)" if is_student_mode else "教师模型 (原始SAC)"
+                        print(f"\n>>> 已切换到 {mode_name}")
+                        if is_student_mode:
+                            param_count = sum(p.numel() for p in student.parameters())
+                        else:
+                            param_count = sum(p.numel() for p in actor.parameters())
+                        print(f"    参数量: {param_count:,}")
+                    else:
+                        print("\n学生模型未加载, 无法切换. 请先运行 distill.py 进行蒸馏训练.")
 
         # ----- 获取鼠标目标 -----
         mouse_x, _ = pygame.mouse.get_pos()
@@ -324,17 +452,11 @@ def main():
             else:
                 delayed_target = 0.0
 
-            # ---- 神经网络控制 (替代 MPC) ----
+            # ---- 神经网络控制 (可切换教师/学生) ----
             nn_state = build_nn_state(env.theta, env.omega, target_buffer, H)
 
             t_infer_start = time.perf_counter()
-            # 对称性
-            if False:
-                symmetry_nn_state = np.stack([nn_state, -nn_state])
-                symmetry_action_np = actor.get_action(symmetry_nn_state, deterministic=True)
-                action_np = (symmetry_action_np[0] - symmetry_action_np[1]) / 2.0
-            else:
-                action_np = actor.get_action(nn_state, deterministic=True)
+            action_np = inference_with_model(current_model, nn_state, is_student_mode)
             nn_inference_time = time.perf_counter() - t_infer_start
 
             # 应用第一个力矩
@@ -351,9 +473,11 @@ def main():
             curve_plotter.draw()
 
             # 状态文字
+            model_name = "学生模型 (蒸馏)" if is_student_mode else "教师模型 (原始SAC)"
+            param_count = sum(p.numel() for p in current_model.parameters())
             status_lines = [
-                f"Control: Neural Network (SAC Actor)",
-                f"H={H} (prediction horizon: {H*DT_CTRL:.2f}s)",
+                f"Control: {model_name}  [按 D 键切换]",
+                f"参数量: {param_count:,}  H={H} (horizon: {H*DT_CTRL:.2f}s)",
                 f"Torque: {tau_nn:.4f}  NN Inference: {nn_inference_time*1000:.2f}ms",
                 f"Sleep: {sleep_time:.4f}s/frame ({(sleep_time/DT_CTRL)*100:.1f}% Free)",
             ]

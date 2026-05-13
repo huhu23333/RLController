@@ -131,6 +131,68 @@ class Actor(nn.Module):
         return action_np[0] if squeeze else action_np
 
 
+class SmallActor(nn.Module):
+    """
+    轻量级 Actor 网络，用于知识蒸馏.
+    结构更小、参数更少，适合部署到计算资源有限的场景.
+    输出仅含确定性动作 (用于蒸馏学习).
+    """
+    def __init__(self, input_dim, action_dim, hidden_dim=64, num_blocks=3,
+                 u_min=-2.0, u_max=2.0):
+        super().__init__()
+        self.action_dim = action_dim
+        self.action_scale = (u_max - u_min) / 2.0
+        self.action_bias = (u_max + u_min) / 2.0
+
+        layers = [nn.Linear(input_dim, hidden_dim), nn.LeakyReLU()]
+        for _ in range(num_blocks):
+            layers.append(ResidualFCBlock(hidden_dim, nn.LeakyReLU()))
+        layers.append(nn.Linear(hidden_dim, action_dim))
+
+        self.net = nn.Sequential(*layers)
+
+        # 小权重初始化
+        self.net[-1].apply(lambda m: init_weights(m, 0.01))
+
+    def forward(self, state):
+        """
+        前向传播 (确定性).
+
+        Args:
+            state: [batch, input_dim] 输入状态
+
+        Returns:
+            action: [batch, action_dim] 缩放到力矩范围的行动
+        """
+        x = self.net(state)
+        raw_action = torch.tanh(x)
+        action = raw_action * self.action_scale + self.action_bias
+        return action
+
+    def get_action(self, state_np):
+        """
+        用于推理的便捷接口.
+
+        Args:
+            state_np: [input_dim] 或 [batch, input_dim]
+
+        Returns:
+            action_np: [action_dim] 或 [batch, action_dim]
+        """
+        if state_np.ndim == 1:
+            state_np = state_np[np.newaxis, :]
+            squeeze = True
+        else:
+            squeeze = False
+
+        with torch.no_grad():
+            state_t = torch.FloatTensor(state_np)
+            action_t = self.forward(state_t)
+            action_np = action_t.cpu().numpy()
+
+        return action_np[0] if squeeze else action_np
+
+
 class Critic(nn.Module):
     """
     SAC Critic (Q-function) 网络.
