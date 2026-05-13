@@ -12,13 +12,9 @@ import math
 import random
 from torch.utils.tensorboard import SummaryWriter
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'test'))
-from SimEnv import SimpleYawSimEnv
-
 from config import (
     DATA_DIR, MODEL_DIR, LOG_DIR,
-    DT_ENV, DT_CTRL, STEPS_PER_CTRL,
-    J, TAU_C, TAU_S, OMEGA_S, B, ANGLE_LIMIT, DISTURBANCE_TORQUE,
+    DT_CTRL,
     U_MIN, U_MAX, H,
     STATE_DIM, TARGET_DIM, INPUT_DIM, ACTION_DIM, HIDDEN_DIM,
     NOISE_STD_MIN, NOISE_STD_MAX, SCALE_FACTOR_MIN, SCALE_FACTOR_MAX,
@@ -150,26 +146,16 @@ def build_state(theta, omega, target_seq, idx, H_val):
     return state_vec
 
 
-# ---------- 训练环境封装 (与 train_sac.py 保持一致) ----------
-class TrainingEnv:
-    """用于训练的仿真环境封装"""
-    def __init__(self):
-        self.env = SimpleYawSimEnv(
-            dt=DT_ENV, J=J, tau_c=TAU_C, tau_s=TAU_S,
-            omega_s=OMEGA_S, b=B,
-            angle_limit=ANGLE_LIMIT,
-            disturbance_torque=DISTURBANCE_TORQUE
-        )
+# ---------- 随机采样参数 ----------
+# 速度采样参数 (正态分布, 弧度/秒)
+OMEGA_MEAN = 0.0     # 速度均值
+OMEGA_STD = 10.0      # 速度标准差
+OMEGA_NEAR_0_PROB = 0.2      # 速度采样换为另一个接近0的分布的概率
+OMEGA_NEAR_0_STD = 0.1      # 接近0的分布速度标准差
+OMEGA_0_PROB = 0.2      # 在上述基础上速度固定为0概率
 
-    def reset(self, theta=0.0, omega=0.0):
-        self.env.theta = theta
-        self.env.omega = omega
-
-    def step_one(self, torque):
-        """执行 1 个控制步"""
-        for _ in range(STEPS_PER_CTRL):
-            self.env.step(np.array([float(torque)]))
-        return self.env.theta, self.env.omega
+D_THETA_NEAR_0_PROB = 0.1  # 当前位置与第一个目标位置相近的概率
+D_THETA_NEAR_0_STD = 0.02      # 上述的接近分布方差
 
 
 # ---------- 蒸馏配置 ----------
@@ -262,7 +248,6 @@ def distill():
     os.makedirs(distill_log_dir, exist_ok=True)
     writer = SummaryWriter(distill_log_dir)
 
-    train_env = TrainingEnv()
     global_step = 0
     best_loss = float('inf')
 
@@ -283,18 +268,24 @@ def distill():
                 add_offset=True
             )
 
-            # 初始化环境
-            init_theta = wrap_angle(float(target_seq[0]) + random.uniform(-0.5, 0.5))
-            init_omega = random.uniform(-0.1, 0.1)
-            train_env.reset(init_theta, init_omega)
-            theta = init_theta
-            omega = init_omega
-
             # 收集当前 episode 的 (状态, 教师动作) 对
             states_batch = []
             teacher_actions_batch = []
 
             for step in range(STEPS_PER_EPISODE):
+                # 随机采样当前状态 (不使用仿真环境)
+                if random.random() > D_THETA_NEAR_0_PROB:
+                    theta = random.uniform(-math.pi, math.pi)
+                else:
+                    theta = random.gauss(float(target_seq[step + 1]), D_THETA_NEAR_0_STD)
+                if random.random() > OMEGA_NEAR_0_PROB:
+                    omega = random.gauss(OMEGA_MEAN, OMEGA_STD)
+                else:
+                    if random.random() > OMEGA_0_PROB:
+                        omega = random.gauss(OMEGA_MEAN, OMEGA_NEAR_0_STD)
+                    else:
+                        omega = 0.0
+
                 # 构建状态 (与 SAC 训练完全一致)
                 state = build_state(theta, omega, target_seq, step, H)
 
@@ -306,17 +297,9 @@ def distill():
                     )
                 teacher_action = teacher_action_t.cpu().numpy()[0]
 
-                # 应用教师动作到环境, 推进一步
-                torque = float(teacher_action[0])
-                theta_new, omega_new = train_env.step_one(torque)
-
                 # 保存 (状态, 教师动作) 对
                 states_batch.append(state)
                 teacher_actions_batch.append(teacher_action)
-
-                # 更新状态
-                theta = wrap_angle(theta_new)
-                omega = omega_new
 
             # ---- 在此 episode 的数据上训练学生网络 ----
             # 将数据转换为张量
@@ -403,8 +386,6 @@ def evaluate(student, teacher, all_targets, device):
     在随机采样的 episode 上对比两个网络的输出动作.
     """
     student.eval()
-    train_env = TrainingEnv()
-
     n_eval_episodes = 10
     total_action_mse = 0.0
     total_action_mae = 0.0
@@ -418,13 +399,11 @@ def evaluate(student, teacher, all_targets, device):
             add_offset=True
         )
 
-        init_theta = wrap_angle(float(target_seq[0]) + random.uniform(-0.5, 0.5))
-        init_omega = random.uniform(-0.1, 0.1)
-        train_env.reset(init_theta, init_omega)
-        theta = init_theta
-        omega = init_omega
-
         for step in range(STEPS_PER_EPISODE):
+            # 随机采样当前状态 (不使用仿真环境)
+            theta = random.uniform(-math.pi, math.pi)
+            omega = random.gauss(OMEGA_MEAN, OMEGA_STD)
+
             state = build_state(theta, omega, target_seq, step, H)
             state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
 
@@ -439,12 +418,6 @@ def evaluate(student, teacher, all_targets, device):
             total_action_mse += (diff ** 2).sum().item()
             total_action_mae += diff.abs().sum().item()
             total_steps += 1
-
-            # 用教师动作推进环境
-            torque = float(teacher_action_t.cpu().numpy()[0, 0])
-            theta_new, omega_new = train_env.step_one(torque)
-            theta = wrap_angle(theta_new)
-            omega = omega_new
 
     avg_mse = total_action_mse / max(total_steps, 1)
     avg_mae = total_action_mae / max(total_steps, 1)
