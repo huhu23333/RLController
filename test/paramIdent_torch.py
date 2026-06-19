@@ -20,18 +20,18 @@ from config import DATA_DIR, DT_ENV, DT_CTRL, STEPS_PER_CTRL, J, TAU_C, TAU_S, O
 plt.rcParams['font.family'] = 'SimHei'
 
 
-class StraightThroughGate(torch.autograd.Function):
-    """前向：离散门控（|x|<eps → 1，否则0）；反向：梯度方向取反（近似 ∂gate/∂x ≈ -1）"""
-    @staticmethod
-    def forward(ctx, x, eps):
-        ctx.save_for_backward(x)
-        ctx.eps = eps
-        return (x.abs() < eps).float()
+# class StraightThroughGate(torch.autograd.Function):
+#     """前向：离散门控（|x|<eps → 1，否则0）；反向：梯度方向取反（近似 ∂gate/∂x ≈ -1）"""
+#     @staticmethod
+#     def forward(ctx, x, eps):
+#         ctx.save_for_backward(x)
+#         ctx.eps = eps
+#         return (x.abs() < eps).float()
 
-    @staticmethod
-    def backward(ctx, grad_output):
-        # 将梯度取反，使门控随 |x| 增大而减小
-        return -grad_output*1.0, None
+#     @staticmethod
+#     def backward(ctx, grad_output):
+#         # 将梯度取反，使门控随 |x| 增大而减小
+#         return -grad_output*1.0, None
 
 # ==================== 可微分仿真环境 ====================
 class DifferentiableYawSimEnv:
@@ -86,9 +86,9 @@ class DifferentiableYawSimEnv:
         # # 门控值: 当 |omega| 很小时 gate ≈ 1
         # gate = torch.sigmoid(beta * (self.eps_omega - omega.abs()))
 
-        # gate = 1 if omega.abs() < self.eps_omega else 0
+        gate = 1 if omega.abs() < self.eps_omega else 0
         
-        gate = StraightThroughGate.apply(omega, self.eps_omega)
+        # gate = StraightThroughGate.apply(omega, self.eps_omega)
         
         # ---- 静止分支: 静摩擦 ----
         # 电机力矩被钳制在 [-tau_s, tau_s] 内
@@ -175,43 +175,43 @@ def generate_training_data(data_theta, data_omega, data_target, data_torque, dat
     返回：
         tau_seq, theta_true, omega_true, theta_init, omega_init
     """
-    # 决定生成模式
-    if tau_s_estimate is not None and tau_s_estimate > 0:
-        r = np.random.rand()
-        if r < 0.1:          # 标准差 = tau_s_estimate
-            std = tau_s_estimate
-        elif r < 0.2:        # 标准差 = 0.1 * tau_s_estimate
-            std = 0.1 * tau_s_estimate
-        else:                # 正常采样
-            std = None
-    else:
-        std = None
+    # # 决定生成模式
+    # if tau_s_estimate is not None and tau_s_estimate > 0:
+    #     r = np.random.rand()
+    #     if r < 0.1:          # 标准差 = tau_s_estimate
+    #         std = tau_s_estimate
+    #     elif r < 0.2:        # 标准差 = 0.1 * tau_s_estimate
+    #         std = 0.1 * tau_s_estimate
+    #     else:                # 正常采样
+    #         std = None
+    # else:
+    #     std = None
 
-    # ===== 特殊模式：恒定力矩 =====
-    if std is not None:
-        # 采样恒定力矩（均值为0）
-        tau_const = np.random.normal(0, std)
-        tau_const = np.clip(tau_const, -2.0, 2.0)
+    # # ===== 特殊模式：恒定力矩 =====
+    # if std is not None:
+    #     # 采样恒定力矩（均值为0）
+    #     tau_const = np.random.normal(0, std)
+    #     tau_const = np.clip(tau_const, -2.0, 2.0)
 
-        from SimEnv import SimpleYawSimEnv
-        env = SimpleYawSimEnv(dt=dt_env, J=J, tau_c=TAU_C, tau_s=TAU_S,
-                              omega_s=OMEGA_S, b=B)
-        env.theta = 0.0
-        env.omega = 0.0
+    #     from SimEnv import SimpleYawSimEnv
+    #     env = SimpleYawSimEnv(dt=dt_env, J=J, tau_c=TAU_C, tau_s=TAU_S,
+    #                           omega_s=OMEGA_S, b=B)
+    #     env.theta = 0.0
+    #     env.omega = 0.0
 
-        tau_seq = []
-        theta_true = []
-        omega_true = []
-        for _ in range(seq_len):
-            env.step(np.array([tau_const]))
-            tau_seq.append(tau_const)
-            theta_true.append(env.theta)
-            omega_true.append(env.omega)
+    #     tau_seq = []
+    #     theta_true = []
+    #     omega_true = []
+    #     for _ in range(seq_len):
+    #         env.step(np.array([tau_const]))
+    #         tau_seq.append(tau_const)
+    #         theta_true.append(env.theta)
+    #         omega_true.append(env.omega)
 
-        return (np.array(tau_seq, dtype=np.float32),
-                np.array(theta_true, dtype=np.float32),
-                np.array(omega_true, dtype=np.float32),
-                0.0, 0.0)   # 初始状态均为0
+    #     return (np.array(tau_seq, dtype=np.float32),
+    #             np.array(theta_true, dtype=np.float32),
+    #             np.array(omega_true, dtype=np.float32),
+    #             0.0, 0.0)   # 初始状态均为0
 
     # ===== 正常采样模式（原有逻辑） =====
     from PID import PIDController
@@ -293,8 +293,8 @@ def optimize_parameters(
     # 初始值使用合理猜测
     log_J = nn.Parameter(torch.tensor(math.log(0.05), device=device))
     log_tau_c = nn.Parameter(torch.tensor(math.log(0.5), device=device))
-    log_tau_s = nn.Parameter(torch.tensor(math.log(0.8), device=device))
-    log_omega_s = nn.Parameter(torch.tensor(math.log(0.05), device=device))
+    # log_tau_s = nn.Parameter(torch.tensor(math.log(0.8), device=device))
+    log_omega_s = torch.tensor(math.log(0.005), device=device) # nn.Parameter(torch.tensor(math.log(0.05), device=device))
     log_b = nn.Parameter(torch.tensor(math.log(0.03), device=device))
     tau_d = torch.tensor(0.0, device=device) # nn.Parameter(torch.tensor(0.0, device=device))
     
@@ -304,14 +304,14 @@ def optimize_parameters(
         J_val = torch.exp(log_J)
         tau_c_val = torch.exp(log_tau_c)
         # tau_s = tau_c + exp(log_diff) 保证 tau_s > tau_c
-        tau_s_val = tau_c_val + torch.exp(log_tau_s)
+        tau_s_val = (tau_c_val * 1.2).detach() # + torch.exp(log_tau_s)
         omega_s_val = torch.exp(log_omega_s)
         b_val = torch.exp(log_b)
         return J_val, tau_c_val, tau_s_val, omega_s_val, b_val, tau_d
     
     # 优化器
     optimizer = torch.optim.SGD(
-        [log_J, log_tau_c, log_tau_s, log_omega_s, log_b, tau_d],
+        [log_J, log_tau_c, log_b, tau_d],
         lr=lr
     )
     
@@ -368,7 +368,7 @@ def optimize_parameters(
             loss.backward()
             # print(log_J.grad, log_tau_c.grad, log_tau_s.grad, log_omega_s.grad, log_b.grad, tau_d.grad)
             torch.nn.utils.clip_grad_value_(
-                [log_J, log_tau_c, log_tau_s, log_omega_s, log_b, tau_d],
+                [log_J, log_tau_c, log_b, tau_d],
                 2.0
             )
             optimizer.step()
@@ -425,9 +425,9 @@ if __name__ == "__main__":
     # 优化
     final_params, loss_history, param_history = optimize_parameters(
         data_theta, data_omega, data_target, data_torque, data_timestamps,
-        num_epochs=200000,
+        num_epochs=20000,
         lr=1e-3,
-        seq_len=3,
+        seq_len=10,
         num_sequences_per_epoch=3,
         device=device
     )
