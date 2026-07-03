@@ -18,5 +18,5 @@ target_link_libraries(mpc_controller ${CERES_LIBRARIES})
 
 # 输出库到当前目录
 set_target_properties(mpc_controller PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    LIBRARY_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}"
 )
