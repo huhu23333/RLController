@@ -2,3 +2,5 @@
 .github
 .vscode
 __pycache__
+build/*
+!build/.gitkeep
