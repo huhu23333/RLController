@@ -1,4 +1,4 @@
-# test2.py
+# test3.py
 import pygame
 import sys
 import math
@@ -196,9 +196,9 @@ def main():
     mpc = MPCController(
         dt_control=DT_CTRL,
         dt_sim=DT_MPC_SIM,
-        J=env.J,
-        tau_c=env.tau_c,
-        b=env.b,
+        J=0.010092,#env.J,
+        tau_c=0.207288,#env.tau_c,
+        b=0.009696,#env.b,
         angle_limit=env.angle_limit,
         disturbance_torque=env.disturbance_torque,
         N=DELAY_STEPS,           # 预测时域 20步 = 0.2秒

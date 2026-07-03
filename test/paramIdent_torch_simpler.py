@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 
 # 导入PID控制器和原始仿真环境(用于数据生成)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'nn_control'))
-from config import DATA_DIR, DT_ENV, DT_CTRL, STEPS_PER_CTRL, J, TAU_C, TAU_S, OMEGA_S, B
+from config import DATA_DIR, DT_ENV, DT_CTRL, STEPS_PER_CTRL
 
 plt.rcParams['font.family'] = 'SimHei'
 
@@ -110,7 +110,7 @@ def load_recording_data(filepath=None):
            data['timestamps'].astype(np.float64)
 
 
-def generate_training_data(data_theta, data_omega, data_target, data_torque, data_timestamps,
+def generate_training_data(env, data_theta, data_omega, data_target, data_torque, data_timestamps,
                            dt_env=DT_ENV, dt_ctrl=DT_CTRL, steps_per_ctrl=STEPS_PER_CTRL,
                            seq_len=300):
     from PID import PIDController
@@ -138,9 +138,6 @@ def generate_training_data(data_theta, data_omega, data_target, data_torque, dat
         deadband=0.0
     )
 
-    from SimEnv import SimpleYawSimEnv
-    env = SimpleYawSimEnv(dt=dt_env, J=J, tau_c=TAU_C, tau_s=TAU_S,
-                          omega_s=OMEGA_S, b=B)
     env.theta = theta_init
     env.omega = omega_init
 
@@ -168,6 +165,7 @@ def generate_training_data(data_theta, data_omega, data_target, data_torque, dat
 
 # ==================== 优化主流程 ====================
 def optimize_parameters(
+    env, 
     data_theta, data_omega, data_target, data_torque, data_timestamps,
     num_epochs=2000, lr=0.001, seq_len=300, num_sequences_per_epoch=5,
     device='cpu'
@@ -183,6 +181,7 @@ def optimize_parameters(
         num_sequences_per_epoch: 每轮采样的序列数量
         device: 计算设备
     """
+
     # 创建可微分仿真环境
     diff_env = DifferentiableYawSimEnv(dt=0.01)  # 100Hz
 
@@ -216,10 +215,10 @@ def optimize_parameters(
     loss_history = []
     param_history = []
     
-    true_params = [J, TAU_C, TAU_S, OMEGA_S, B, 0.0]  # 真实参数
+    true_params = [env.J, env.tau_c, env.b, env.disturbance_torque]  # 真实参数
     
     print(f"开始优化: {num_epochs} epochs, lr={lr}, seq_len={seq_len}")
-    print(f"真实参数: J={J}, tau_c={TAU_C}, tau_s={TAU_S}, omega_s={OMEGA_S}, b={B}, tau_d=0.0")
+    print(f"真实参数: J={env.J}, tau_c={env.tau_c}, b={env.b}, tau_d={env.disturbance_torque}")
     print(f"设备: {device}")
     print("-" * 60)
     
@@ -230,6 +229,7 @@ def optimize_parameters(
             # 生成训练数据（每次采样不同的片段）
             tau_seq_np, theta_true_np, omega_true_np, theta_init, omega_init = \
                 generate_training_data(
+                    env, 
                     data_theta, data_omega, data_target, data_torque, data_timestamps,
                     seq_len=seq_len
                 )
@@ -283,8 +283,8 @@ def optimize_parameters(
                 print(f"Epoch {epoch:5d}/{num_epochs} | Loss: {epoch_loss:.6e}")
                 print(f"\tJ={J_v.item():.6f} (真:{true_params[0]:.4f})"
                       f"\ttau_c={tc_v.item():.6f} (真:{true_params[1]:.4f})")
-                print(f"\tb={b_v.item():.6f} (真:{true_params[4]:.4f})"
-                      f"\ttau_d={td_v.item():.6f} (真:{true_params[5]:.4f})")
+                print(f"\tb={b_v.item():.6f} (真:{true_params[2]:.4f})"
+                      f"\ttau_d={td_v.item():.6f} (真:{true_params[3]:.4f})")
     
     # 最终参数
     with torch.no_grad():
@@ -298,6 +298,10 @@ if __name__ == "__main__":
     # 设备
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"使用设备: {device}")
+
+    from SimEnv import SimpleYawSimEnv
+    env = SimpleYawSimEnv(dt=DT_ENV)#, J=J, tau_c=TAU_C, tau_s=TAU_S,
+                        #omega_s=OMEGA_S, b=B)
     
     # 加载录制数据（与train_sac.py相同的数据源）
     print("加载录制数据...")
@@ -311,6 +315,7 @@ if __name__ == "__main__":
     
     # 优化
     final_params, loss_history, param_history = optimize_parameters(
+        env, 
         data_theta, data_omega, data_target, data_torque, data_timestamps,
         num_epochs=50000,
         lr=1e-3,
@@ -321,7 +326,7 @@ if __name__ == "__main__":
     
     # 打印最终结果
     param_names = ['J', 'tau_c', 'b', 'tau_d']
-    true_params = [J, TAU_C, B, 0.0]
+    true_params = [env.J, env.tau_c, env.b, env.disturbance_torque]
     
     print("\n" + "=" * 60)
     print("辨识结果:")
@@ -377,6 +382,7 @@ if __name__ == "__main__":
     # 采样一段数据做仿真对比
     tau_seq_np, theta_true_np, omega_true_np, theta_init, omega_init = \
         generate_training_data(
+            env, 
             data_theta, data_omega, data_target, data_torque, data_timestamps,
             seq_len=300
         )

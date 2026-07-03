@@ -1,1 +1,0 @@
-/usr/bin/c++ -fPIC -shared -Wl,-soname,libmpc_controller.so -o libmpc_controller.so CMakeFiles/mpc_controller.dir/mpc_controller.cpp.o CMakeFiles/mpc_controller.dir/mpc_c_api.cpp.o  /usr/lib/libceres.so.2.0.0 /usr/lib/x86_64-linux-gnu/libglog.so.0.4.0 /usr/lib/x86_64-linux-gnu/libunwind.so /usr/lib/x86_64-linux-gnu/libgflags.so.2.2.2 -lpthread 
